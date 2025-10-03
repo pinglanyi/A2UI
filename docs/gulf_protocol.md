@@ -336,9 +336,9 @@ This message is the only way to modify the client's data model.
 
 ### 4.2. Data Binding (The `BoundValue` Object)
 
-Components connect to the data model through binding. Any property that can be data-bound (like `text` on a `Text` component) accepts an object that defines either a literal value or a data path.
+Components connect to the data model through binding. Any property that can be data-bound (like `text` on a `Text` component) accepts a `BoundValue` object. This object defines either a literal value, a data path, or both as a shorthand for initialization.
 
-From `gulf_schema.json`, a bound `text` property looks like this:
+From the catalog schema, a bound `text` property looks like this:
 
 ```json
 "text": {
@@ -349,18 +349,29 @@ From `gulf_schema.json`, a bound `text` property looks like this:
 }
 ```
 
-A component can also bind to numbers (`literalNumber`), booleans (`literalBoolean`), or arrays (`literalArray`).
+A component can also bind to numbers (`literalNumber`), booleans (`literalBoolean`), or arrays (`literalArray`). The behavior depends on which properties are provided:
 
-- If `literalString` is provided, the value is static.
+- **Literal Value Only**: If only a `literal*` value (e.g., `literalString`) is provided, the value is static and displayed directly.
 
   ```json
   "text": { "literalString": "Hello" }
   ```
 
-- If `path` is provided, the value is dynamic and resolved from the data model.
+- **Path Only**: If only `path` is provided, the value is dynamic. It's resolved from the data model at render time.
 
   ```json
   "text": { "path": "user.name" }
+  ```
+
+- **Path and Literal Value (Initialization Shorthand)**: If **both** `path` and a `literal*` value are provided, it serves as a shorthand for data model initialization. The client MUST:
+    1.  Update the data model at the specified `path` with the provided `literal*` value. This is an implicit `dataModelUpdate`.
+    2.  Bind the component property to that `path` for rendering and future updates.
+
+  This allows the server to set a default value and bind to it in a single step.
+
+  ```json
+  // This initializes data model at 'user.name' to "Guest" and binds to it.
+  "text": { "path": "user.name", "literalString": "Guest" }
   ```
 
 The client's interpreter is responsible for resolving these paths against the data model before rendering. The GULF protocol supports direct 1:1 binding; it does not include transformers (e.g., formatters, conditionals). Any data transformation must be performed by the server before sending it in a `dataModelUpdate`.

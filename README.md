@@ -15,5 +15,5 @@ The GULF protocol enables a server to stream a platform-agnostic, abstract UI de
 
 The repository is structured as follows:
 
-*   `specification/`: This directory contains the formal specification for the GULF protocol. The main specification document provides a detailed explanation of the protocol's design, architecture, and data flow.
+*   `docs/`: This directory contains the formal specification for the GULF protocol (`docs/gulf_protocol.md`) and related design documents and proposals.
 *   `specification/json/`: This directory contains the JSON schema files used to validate GULF protocol messages and client event messages.
