@@ -49,13 +49,14 @@ def main(host, port):
   try:
     # Check for API key only if Vertex AI is not configured
     if not os.getenv("GOOGLE_GENAI_USE_VERTEXAI") == "TRUE":
-      if not os.getenv("GEMINI_API_KEY"):
+      if not os.getenv("GEMINI_API_KEY") and not os.getenv("OPENAI_API_KEY"):
         raise MissingAPIKeyError(
-            "GEMINI_API_KEY environment variable not set and GOOGLE_GENAI_USE_VERTEXAI"
-            " is not TRUE."
+            "No API key found. Set OPENAI_API_KEY (for OpenAI / vLLM / any"
+            " OpenAI-compatible API) or GEMINI_API_KEY, or set"
+            " GOOGLE_GENAI_USE_VERTEXAI=TRUE for Vertex AI."
         )
 
-    lite_llm_model = os.getenv("LITELLM_MODEL", "gemini/gemini-2.5-flash")
+    lite_llm_model = os.getenv("AI_MODEL") or os.getenv("LITELLM_MODEL", "gemini/gemini-2.5-flash")
 
     base_url = f"http://{host}:{port}"
 
