@@ -98,7 +98,12 @@ class RestaurantAgent:
 
   def _build_agent(self, use_ui: bool) -> LlmAgent:
     """Builds the LLM agent for the restaurant agent."""
-    LITELLM_MODEL = os.getenv("AI_MODEL") or os.getenv("LITELLM_MODEL", "gemini/gemini-2.5-flash")
+    _default_model = (
+        "openai/gpt-4o"
+        if os.getenv("OPENAI_API_KEY") and not os.getenv("GEMINI_API_KEY")
+        else "gemini/gemini-2.5-flash"
+    )
+    LITELLM_MODEL = os.getenv("AI_MODEL") or os.getenv("LITELLM_MODEL", _default_model)
 
     instruction = (
         self._schema_manager.generate_system_prompt(

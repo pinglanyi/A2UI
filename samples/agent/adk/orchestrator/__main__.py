@@ -27,6 +27,11 @@ from starlette.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
+# LiteLLM reads OPENAI_API_BASE (not OPENAI_BASE_URL) for custom endpoints.
+# Map OPENAI_BASE_URL → OPENAI_API_BASE so vLLM / Ollama / etc. work out of the box.
+if os.getenv("OPENAI_BASE_URL") and not os.getenv("OPENAI_API_BASE"):
+  os.environ["OPENAI_API_BASE"] = os.environ["OPENAI_BASE_URL"]
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
