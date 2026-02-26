@@ -34,6 +34,11 @@ from starlette.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
+# LiteLLM reads OPENAI_API_BASE (not OPENAI_BASE_URL) for custom endpoints.
+# Map OPENAI_BASE_URL → OPENAI_API_BASE so vLLM / Ollama / etc. work out of the box.
+if os.getenv("OPENAI_BASE_URL") and not os.getenv("OPENAI_API_BASE"):
+  os.environ["OPENAI_API_BASE"] = os.environ["OPENAI_BASE_URL"]
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -56,7 +61,12 @@ def main(host, port):
             " GOOGLE_GENAI_USE_VERTEXAI=TRUE for Vertex AI."
         )
 
-    lite_llm_model = os.getenv("AI_MODEL") or os.getenv("LITELLM_MODEL", "gemini/gemini-2.5-flash")
+    _default_model = (
+        "openai/gpt-4o"
+        if os.getenv("OPENAI_API_KEY") and not os.getenv("GEMINI_API_KEY")
+        else "gemini/gemini-2.5-flash"
+    )
+    lite_llm_model = os.getenv("AI_MODEL") or os.getenv("LITELLM_MODEL", _default_model)
 
     base_url = f"http://{host}:{port}"
 
