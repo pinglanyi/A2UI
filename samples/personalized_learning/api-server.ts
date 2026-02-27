@@ -28,14 +28,26 @@ import { getAuth } from "firebase-admin/auth";
 config();
 
 // =============================================================================
-// FIREBASE ADMIN - Server-side authentication
+// FIREBASE ADMIN - Server-side authentication (optional, only for deployed mode)
 // =============================================================================
-initializeApp({ credential: applicationDefault() });
 
 // Local dev mode: skip auth when Firebase is not configured (matches client behavior)
 const IS_LOCAL_DEV_MODE = !process.env.VITE_FIREBASE_API_KEY;
 if (IS_LOCAL_DEV_MODE) {
   console.warn("[API Server] ⚠️  LOCAL DEV MODE: Authentication disabled (VITE_FIREBASE_API_KEY not set)");
+}
+
+// Only initialise Firebase Admin when actually needed (not in local dev mode).
+// Without this guard, applicationDefault() tries to load GCP credentials (gcloud/ADC)
+// and crashes the server when Google Cloud is not configured.
+let firebaseAuth: ReturnType<typeof getAuth> | null = null;
+if (!IS_LOCAL_DEV_MODE) {
+  try {
+    initializeApp({ credential: applicationDefault() });
+    firebaseAuth = getAuth();
+  } catch (e) {
+    console.warn("[API Server] Firebase admin init failed (non-fatal):", String(e));
+  }
 }
 
 // Access control - reads from environment variables (shared with src/firebase-auth.ts)
@@ -56,8 +68,8 @@ function isAllowedEmail(email: string | undefined): boolean {
 }
 
 async function authenticateRequest(req: any, res: any): Promise<boolean> {
-  // In local dev mode, skip authentication entirely
-  if (IS_LOCAL_DEV_MODE) {
+  // In local dev mode (or when Firebase failed to init), skip authentication entirely
+  if (IS_LOCAL_DEV_MODE || !firebaseAuth) {
     return true;
   }
 
@@ -69,7 +81,7 @@ async function authenticateRequest(req: any, res: any): Promise<boolean> {
   }
   try {
     const token = authHeader.split("Bearer ")[1];
-    const decoded = await getAuth().verifyIdToken(token);
+    const decoded = await firebaseAuth.verifyIdToken(token);
     if (!isAllowedEmail(decoded.email)) {
       console.error("[API Server] Access denied for:", decoded.email);
       res.writeHead(403, { "Content-Type": "application/json" });
@@ -733,6 +745,167 @@ async function handleChatRequest(request: ChatRequest): Promise<{ text: string }
 // COMBINED INTENT + RESPONSE ENDPOINT
 // Combines intent detection and response generation in a single LLM call
 // =============================================================================
+// =============================================================================
+// LOCAL CONTENT GENERATION - used when Agent Engine is not configured
+// =============================================================================
+
+/** Generate flashcard A2UI content locally using the configured LLM. */
+async function generateLocalFlashcards(topic: string): Promise<any> {
+  const systemPrompt = `You are creating MCAT study flashcards for Maria, a pre-med student who loves sports/gym analogies.
+
+Create 4 flashcards about "${topic || "ATP and bond energy"}" that:
+1. Address common misconceptions
+2. Use sports/gym analogies for the explanation
+3. Include precise scientific language
+
+Output ONLY valid JSON in this EXACT format (no markdown, no explanation):
+
+[
+  {"beginRendering": {"surfaceId": "learningContent", "root": "mainColumn"}},
+  {
+    "surfaceUpdate": {
+      "surfaceId": "learningContent",
+      "components": [
+        {
+          "id": "mainColumn",
+          "component": {
+            "Column": {
+              "children": {"explicitList": ["headerText", "cardRow1", "cardRow2"]},
+              "distribution": "start",
+              "alignment": "stretch"
+            }
+          }
+        },
+        {
+          "id": "headerText",
+          "component": {"Text": {"text": {"literalString": "Flashcards: [TOPIC]"}, "usageHint": "h3"}}
+        },
+        {
+          "id": "cardRow1",
+          "component": {
+            "Row": {"children": {"explicitList": ["card1", "card2"]}, "distribution": "start", "alignment": "stretch"}
+          }
+        },
+        {
+          "id": "cardRow2",
+          "component": {
+            "Row": {"children": {"explicitList": ["card3", "card4"]}, "distribution": "start", "alignment": "stretch"}
+          }
+        },
+        {
+          "id": "card1",
+          "component": {"Flashcard": {"front": {"literalString": "[QUESTION 1]"}, "back": {"literalString": "[ANSWER 1 WITH ANALOGY]"}, "category": {"literalString": "[CATEGORY]"}}}
+        },
+        {
+          "id": "card2",
+          "component": {"Flashcard": {"front": {"literalString": "[QUESTION 2]"}, "back": {"literalString": "[ANSWER 2 WITH ANALOGY]"}, "category": {"literalString": "[CATEGORY]"}}}
+        },
+        {
+          "id": "card3",
+          "component": {"Flashcard": {"front": {"literalString": "[QUESTION 3]"}, "back": {"literalString": "[ANSWER 3 WITH ANALOGY]"}, "category": {"literalString": "[CATEGORY]"}}}
+        },
+        {
+          "id": "card4",
+          "component": {"Flashcard": {"front": {"literalString": "[QUESTION 4]"}, "back": {"literalString": "[ANSWER 4 WITH ANALOGY]"}, "category": {"literalString": "[CATEGORY]"}}}
+        }
+      ]
+    }
+  }
+]
+
+Replace all [BRACKETED] placeholders with actual content.`;
+
+  try {
+    let text: string;
+    if (llmBackend === "openai") {
+      text = await callOpenAI([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Generate flashcards about: ${topic || "ATP and bond energy"}` },
+      ], true);
+    } else {
+      const response = await genai.models.generateContent({
+        model: MODEL,
+        contents: [{ role: "user", parts: [{ text: `Generate flashcards about: ${topic || "ATP and bond energy"}` }] }],
+        config: { systemInstruction: systemPrompt, responseMimeType: "application/json" },
+      });
+      text = response.text?.trim() || "";
+    }
+
+    let cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    const parsed = JSON.parse(cleaned);
+    const a2ui: unknown[] = Array.isArray(parsed) ? parsed : (parsed.a2ui ?? []);
+    const source = getOpenStaxSource(topic);
+    return { format: "flashcards", surfaceId: "learningContent", a2ui, source };
+  } catch (error) {
+    console.error("[API Server] Local flashcard generation failed:", error);
+    return null;
+  }
+}
+
+/** Return static audio/podcast A2UI content (matches Python agent.py). */
+function getStaticAudioContent(): any {
+  return {
+    format: "audio",
+    surfaceId: "learningContent",
+    a2ui: [
+      { beginRendering: { surfaceId: "learningContent", root: "audioCard" } },
+      {
+        surfaceUpdate: {
+          surfaceId: "learningContent",
+          components: [
+            { id: "audioCard", component: { Card: { child: "audioContent" } } },
+            {
+              id: "audioContent",
+              component: { Column: { children: { explicitList: ["audioHeader", "audioPlayer", "audioDescription"] }, distribution: "start", alignment: "stretch" } },
+            },
+            { id: "audioHeader", component: { Row: { children: { explicitList: ["audioIcon", "audioTitle"] }, distribution: "start", alignment: "center" } } },
+            { id: "audioIcon", component: { Icon: { name: { literalString: "podcasts" } } } },
+            { id: "audioTitle", component: { Text: { text: { literalString: "ATP & Chemical Stability: Correcting the Misconception" }, usageHint: "h3" } } },
+            { id: "audioPlayer", component: { AudioPlayer: { url: { literalString: "/assets/podcast.m4a" }, audioTitle: { literalString: "Understanding ATP Energy Release" }, audioDescription: { literalString: "A personalized podcast about ATP and chemical stability" } } } },
+            { id: "audioDescription", component: { Text: { text: { literalString: "This personalized podcast explains why 'energy stored in bonds' is a common misconception. Using gym analogies, it walks through how ATP hydrolysis actually releases energy through stability differences, not bond breaking." }, usageHint: "body" } } },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+/** Return static video A2UI content (matches Python agent.py). */
+function getStaticVideoContent(): any {
+  return {
+    format: "video",
+    surfaceId: "learningContent",
+    a2ui: [
+      { beginRendering: { surfaceId: "learningContent", root: "videoCard" } },
+      {
+        surfaceUpdate: {
+          surfaceId: "learningContent",
+          components: [
+            { id: "videoCard", component: { Card: { child: "videoContent" } } },
+            {
+              id: "videoContent",
+              component: { Column: { children: { explicitList: ["videoTitle", "videoPlayer", "videoDescription"] }, distribution: "start", alignment: "stretch" } },
+            },
+            { id: "videoTitle", component: { Text: { text: { literalString: "Visual Guide: ATP Energy & Stability" }, usageHint: "h3" } } },
+            { id: "videoPlayer", component: { Video: { url: { literalString: "/assets/video.mp4" } } } },
+            { id: "videoDescription", component: { Text: { text: { literalString: "This animated explainer uses the compressed spring analogy to show why ATP releases energy. See how electrostatic repulsion in ATP makes it 'want' to become the more stable ADP + Pi." }, usageHint: "body" } } },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+/** Generate A2UI content locally for any format when Agent Engine is not available. */
+async function generateLocalContent(format: string, context: string): Promise<any> {
+  const fmt = format.toLowerCase();
+  if (fmt === "audio" || fmt === "podcast") return getStaticAudioContent();
+  if (fmt === "video") return getStaticVideoContent();
+  if (fmt === "quiz") return await generateLocalQuiz(context);
+  if (fmt === "flashcards") return await generateLocalFlashcards(context);
+  return null;
+}
+
 interface CombinedChatRequest {
   systemPrompt: string;
   messages: ChatMessage[];
@@ -941,23 +1114,30 @@ async function main() {
 
         console.log("[API Server] Parsed format:", format);
         console.log("[API Server] Parsed context (keywords):", context);
-        console.log("[API Server] This context will be sent to Agent Engine for topic matching");
 
-        let result = await queryAgentEngine(format, context);
+        const hasAgentEngine = !!(AGENT_ENGINE_CONFIG.projectNumber && AGENT_ENGINE_CONFIG.resourceId);
+        let result: any;
 
-        // If quiz was requested but Agent Engine returned Flashcards or empty,
-        // generate quiz locally using Gemini
-        if (format.toLowerCase() === "quiz") {
-          const a2uiStr = JSON.stringify(result.a2ui || []);
-          const hasFlashcards = a2uiStr.includes("Flashcard");
-          const hasQuizCards = a2uiStr.includes("QuizCard");
-          const isEmpty = !result.a2ui || result.a2ui.length === 0;
+        if (!hasAgentEngine) {
+          // No Agent Engine configured — generate all content locally using the LLM backend
+          console.log("[API Server] Agent Engine not configured, generating content locally");
+          result = await generateLocalContent(format, context);
+          if (!result) {
+            result = { format, surfaceId: "learningContent", a2ui: [], rawText: "Content generation failed" };
+          }
+        } else {
+          console.log("[API Server] This context will be sent to Agent Engine for topic matching");
+          result = await queryAgentEngine(format, context);
 
-          if (isEmpty || (hasFlashcards && !hasQuizCards)) {
-            console.log("[API Server] Agent Engine doesn't support QuizCard, generating locally");
-            const localQuiz = await generateLocalQuiz(context);
-            if (localQuiz) {
-              result = localQuiz;
+          // If quiz was requested but Agent Engine returned Flashcards or empty,
+          // generate quiz locally as fallback
+          if (format.toLowerCase() === "quiz") {
+            const a2uiStr = JSON.stringify(result.a2ui || []);
+            const isEmpty = !result.a2ui || result.a2ui.length === 0;
+            if (isEmpty || (a2uiStr.includes("Flashcard") && !a2uiStr.includes("QuizCard"))) {
+              console.log("[API Server] Agent Engine doesn't support QuizCard, generating locally");
+              const localQuiz = await generateLocalQuiz(context);
+              if (localQuiz) result = localQuiz;
             }
           }
         }
