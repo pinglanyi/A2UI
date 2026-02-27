@@ -134,9 +134,19 @@ const PROJECT = process.env.GOOGLE_CLOUD_PROJECT;
 const LOCATION = process.env.GOOGLE_CLOUD_LOCATION || "us-central1";
 const MODEL = process.env.GENAI_MODEL || "gemini-2.5-flash";
 
-// Validate required environment variables
-if (!PROJECT) {
-  console.error("ERROR: GOOGLE_CLOUD_PROJECT environment variable is required");
+// OpenAI-compatible API support (OpenAI, DeepSeek, vLLM, Ollama, etc.)
+// OPENAI_API_BASE takes priority over OPENAI_BASE_URL (LiteLLM convention)
+const OPENAI_BASE_URL = process.env.OPENAI_API_BASE || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+const OPENAI_MODEL = process.env.AI_MODEL || process.env.LITELLM_MODEL || "gpt-4o";
+let llmBackend: "openai" | "google" = "google";
+
+// Validate: at least one LLM backend must be configured
+if (!process.env.OPENAI_API_KEY && !process.env.GEMINI_API_KEY &&
+    process.env.GOOGLE_GENAI_USE_VERTEXAI !== "TRUE" && !PROJECT) {
+  console.error("ERROR: No LLM API configured. Set one of:");
+  console.error("  OPENAI_API_KEY  – for OpenAI / DeepSeek / vLLM / any OpenAI-compatible API");
+  console.error("  GEMINI_API_KEY  – for Google Gemini API");
+  console.error("  GOOGLE_GENAI_USE_VERTEXAI=TRUE + GOOGLE_CLOUD_PROJECT  – for Vertex AI");
   process.exit(1);
 }
 
@@ -219,15 +229,50 @@ function getOpenStaxSource(topic: string): { provider: string; title: string; ur
 let genai: any = null;
 
 async function initGenAI() {
+  // Priority: OpenAI-compatible > Gemini API > Vertex AI
+  if (process.env.OPENAI_API_KEY && !process.env.GEMINI_API_KEY &&
+      process.env.GOOGLE_GENAI_USE_VERTEXAI !== "TRUE") {
+    llmBackend = "openai";
+    console.log(`[API Server] Using OpenAI-compatible API: ${OPENAI_BASE_URL}`);
+    console.log(`[API Server] Model: ${OPENAI_MODEL}`);
+    return;
+  }
+
   const { GoogleGenAI } = await import("@google/genai");
-  // Use VertexAI with Application Default Credentials
-  genai = new GoogleGenAI({
-    vertexai: true,
-    project: PROJECT,
-    location: LOCATION,
+  if (process.env.GEMINI_API_KEY) {
+    genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    console.log(`[API Server] Using Gemini API, Model: ${MODEL}`);
+  } else {
+    // Vertex AI with Application Default Credentials
+    genai = new GoogleGenAI({ vertexai: true, project: PROJECT, location: LOCATION });
+    console.log(`[API Server] Using VertexAI: ${PROJECT}/${LOCATION}, Model: ${MODEL}`);
+  }
+  llmBackend = "google";
+}
+
+// Helper: call any OpenAI-compatible API (OpenAI, DeepSeek, vLLM, Ollama…)
+async function callOpenAI(
+  messages: Array<{ role: string; content: string }>,
+  jsonMode = false,
+): Promise<string> {
+  const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages,
+      ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
+    }),
   });
-  console.log(`[API Server] Using VertexAI: ${PROJECT}/${LOCATION}`);
-  console.log(`[API Server] Model: ${MODEL}`);
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`OpenAI API error: ${response.status} - ${err.substring(0, 300)}`);
+  }
+  const data = await response.json() as any;
+  return data.choices[0]?.message?.content ?? "";
 }
 
 interface ChatMessage {
@@ -598,16 +643,20 @@ Output ONLY valid JSON in this EXACT format (no markdown, no explanation):
 Replace all [BRACKETED] placeholders with actual content. Vary which option is correct.`;
 
   try {
-    const response = await genai.models.generateContent({
-      model: MODEL,
-      contents: [{ role: "user", parts: [{ text: `Generate quiz questions about: ${topic || 'ATP and bond energy'}` }] }],
-      config: {
-        systemInstruction: systemPrompt,
-        responseMimeType: "application/json",
-      },
-    });
-
-    const text = response.text?.trim() || "";
+    let text: string;
+    if (llmBackend === "openai") {
+      text = await callOpenAI([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Generate quiz questions about: ${topic || "ATP and bond energy"}` },
+      ], true);
+    } else {
+      const response = await genai.models.generateContent({
+        model: MODEL,
+        contents: [{ role: "user", parts: [{ text: `Generate quiz questions about: ${topic || 'ATP and bond energy'}` }] }],
+        config: { systemInstruction: systemPrompt, responseMimeType: "application/json" },
+      });
+      text = response.text?.trim() || "";
+    }
     console.log("[API Server] Local quiz generation response:", text.substring(0, 500));
 
     // Parse the JSON
@@ -648,31 +697,34 @@ async function handleChatRequest(request: ChatRequest): Promise<{ text: string }
   // Build the full system instruction
   const fullSystemPrompt = `${systemPrompt}\n\n${intentGuidance}`;
 
-  // Convert messages to Gemini format
-  const contents = messages.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: m.parts,
-  }));
-
-  // Add the current user message
-  contents.push({
-    role: "user",
-    parts: [{ text: userMessage }],
-  });
-
   try {
-    const response = await genai.models.generateContent({
-      model: MODEL,
-      contents,
-      config: {
-        systemInstruction: fullSystemPrompt,
-      },
-    });
-
-    const text = response.text || "I apologize, I couldn't generate a response.";
+    let text: string;
+    if (llmBackend === "openai") {
+      const oaiMessages = [
+        { role: "system", content: fullSystemPrompt },
+        ...messages.map((m) => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: m.parts.map((p) => p.text).join(" "),
+        })),
+        { role: "user", content: userMessage },
+      ];
+      text = await callOpenAI(oaiMessages);
+    } else {
+      const contents = messages.map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: m.parts,
+      }));
+      contents.push({ role: "user", parts: [{ text: userMessage }] });
+      const response = await genai.models.generateContent({
+        model: MODEL,
+        contents,
+        config: { systemInstruction: fullSystemPrompt },
+      });
+      text = response.text || "I apologize, I couldn't generate a response.";
+    }
     return { text };
   } catch (error) {
-    console.error("[API Server] Error calling Gemini:", error);
+    console.error("[API Server] Error calling LLM:", error);
     throw error;
   }
 }
@@ -741,34 +793,37 @@ The keywords help the content retrieval system find the right OpenStax textbook 
 
 Then provide an appropriate conversational response following your tutor persona.`;
 
-  // Convert messages to Gemini format
-  const contents = messages.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: m.parts,
-  }));
-
   // Add recent context if provided
   let contextualMessage = userMessage;
   if (recentContext) {
     contextualMessage = `Recent conversation:\n${recentContext}\n\nCurrent message: "${userMessage}"`;
   }
 
-  contents.push({
-    role: "user",
-    parts: [{ text: contextualMessage }],
-  });
-
   try {
-    const response = await genai.models.generateContent({
-      model: MODEL,
-      contents,
-      config: {
-        systemInstruction: combinedSystemPrompt,
-        responseMimeType: "application/json",
-      },
-    });
-
-    const responseText = response.text?.trim() || "";
+    let responseText: string;
+    if (llmBackend === "openai") {
+      const oaiMessages = [
+        { role: "system", content: combinedSystemPrompt },
+        ...messages.map((m) => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: m.parts.map((p) => p.text).join(" "),
+        })),
+        { role: "user", content: contextualMessage },
+      ];
+      responseText = await callOpenAI(oaiMessages, true);
+    } else {
+      const contents = messages.map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: m.parts,
+      }));
+      contents.push({ role: "user", parts: [{ text: contextualMessage }] });
+      const response = await genai.models.generateContent({
+        model: MODEL,
+        contents,
+        config: { systemInstruction: combinedSystemPrompt, responseMimeType: "application/json" },
+      });
+      responseText = response.text?.trim() || "";
+    }
     console.log("[API Server] Combined response:", responseText.substring(0, 200));
 
     try {
