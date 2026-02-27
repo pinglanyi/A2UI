@@ -33,15 +33,14 @@ except ImportError:
     # python-dotenv not available (e.g., in Agent Engine)
     pass
 
-# Set up Vertex AI environment - only if not already set
-os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")
+# LiteLLM reads OPENAI_API_BASE (not OPENAI_BASE_URL) for custom endpoints.
+# Map OPENAI_BASE_URL → OPENAI_API_BASE so vLLM / DeepSeek / Ollama / etc. work out of the box.
+if os.getenv("OPENAI_BASE_URL") and not os.getenv("OPENAI_API_BASE"):
+    os.environ["OPENAI_API_BASE"] = os.environ["OPENAI_BASE_URL"]
 
 from google.adk.agents import Agent
+from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools import ToolContext
-
-# Captured at import time for cloudpickle serialization during deployment
-_CONFIG_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
-_CONFIG_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 # Use relative imports - required for proper wheel packaging and Agent Engine deployment
 # These may fail in Agent Engine where files aren't available
@@ -73,8 +72,20 @@ if not _HAS_OPENSTAX:
         "Flashcards and quizzes will not have textbook source material."
     )
 
-# Model configuration - use Gemini 2.5 Flash (available in us-central1)
-MODEL_ID = os.getenv("GENAI_MODEL", "gemini-2.5-flash")
+# Model configuration via LiteLLM - supports OpenAI, DeepSeek, vLLM, Gemini, Vertex AI.
+# Priority: AI_MODEL > LITELLM_MODEL > auto-detect from available API keys.
+# Examples:
+#   OpenAI       : AI_MODEL=openai/gpt-4o
+#   DeepSeek     : AI_MODEL=openai/deepseek-chat  (with OPENAI_BASE_URL=https://api.deepseek.com/v1)
+#   vLLM local   : AI_MODEL=openai/meta-llama/Llama-3-70b-chat-hf  (with OPENAI_BASE_URL=http://localhost:8000/v1)
+#   Gemini API   : AI_MODEL=gemini/gemini-2.5-flash
+#   Vertex AI    : AI_MODEL=vertex_ai/gemini-2.5-flash
+_default_model = (
+    "openai/gpt-4o"
+    if os.getenv("OPENAI_API_KEY") and not os.getenv("GEMINI_API_KEY")
+    else "gemini/gemini-2.5-flash"
+)
+MODEL_ID = os.getenv("AI_MODEL") or os.getenv("LITELLM_MODEL") or os.getenv("GENAI_MODEL") or _default_model
 
 # Supported content formats
 SUPPORTED_FORMATS = ["flashcards", "audio", "podcast", "video", "quiz"]
@@ -563,36 +574,22 @@ async def _generate_a2ui_content(
     context: str,
     tool_context: ToolContext,
 ) -> dict[str, Any]:
-    """Generate A2UI content using the Gemini model."""
-    from google import genai
-    from google.genai import types
-
-    project = _CONFIG_PROJECT or os.getenv("GOOGLE_CLOUD_PROJECT")
-    location = _CONFIG_LOCATION or os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-
-    if not project:
-        logger.error("GOOGLE_CLOUD_PROJECT not configured")
-        return {"error": "GOOGLE_CLOUD_PROJECT not configured. Set it in environment or deploy.py."}
-
-    client = genai.Client(
-        vertexai=True,
-        project=project,
-        location=location,
-    )
+    """Generate A2UI content using LiteLLM (supports OpenAI, DeepSeek, vLLM, Gemini, Vertex AI)."""
+    import litellm
 
     system_prompt = _safe_get_system_prompt(format_type, context)
 
     try:
-        response = client.models.generate_content(
+        response = await litellm.acompletion(
             model=MODEL_ID,
-            contents=f"Generate {format_type} for this learner.",
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                response_mime_type="application/json",
-            ),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Generate {format_type} for this learner."},
+            ],
+            response_format={"type": "json_object"},
         )
 
-        response_text = response.text.strip()
+        response_text = response.choices[0].message.content.strip()
 
         try:
             a2ui_json = json.loads(response_text)
@@ -687,10 +684,10 @@ and explain the content to the learner.
 """
 
 def create_agent() -> Agent:
-    """Create the ADK agent with all tools."""
+    """Create the ADK agent with all tools using LiteLLM for multi-backend support."""
     return Agent(
         name="personalized_learning_agent",
-        model=MODEL_ID,
+        model=LiteLlm(model=MODEL_ID),
         instruction=SYSTEM_PROMPT,
         tools=[
             generate_flashcards,
