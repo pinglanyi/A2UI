@@ -1020,7 +1020,7 @@ Then provide an appropriate conversational response following your tutor persona
       };
     }
   } catch (error) {
-    console.error("[API Server] Error calling Gemini for combined request:", error);
+    console.error("[API Server] Error calling LLM for combined request:", error);
     throw error;
   }
 }
@@ -1119,8 +1119,12 @@ async function main() {
         let result: any;
 
         if (!hasAgentEngine) {
-          // No Agent Engine configured — generate all content locally using the LLM backend
-          console.log("[API Server] Agent Engine not configured, generating content locally");
+          // No Agent Engine configured — generate all content locally using the LLM backend.
+          // This is the normal local-dev path. The configured LLM API (OpenAI/Gemini/etc.) IS being used.
+          const backendInfo = llmBackend === "openai"
+            ? `OpenAI-compatible API (${OPENAI_BASE_URL})`
+            : "Google GenAI (Gemini/Vertex)";
+          console.log(`[API Server] ✅ Local mode: generating ${format} content via ${backendInfo}`);
           result = await generateLocalContent(format, context);
           if (!result) {
             result = { format, surfaceId: "learningContent", a2ui: [], rawText: "Content generation failed" };
