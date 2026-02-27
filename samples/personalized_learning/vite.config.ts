@@ -4,6 +4,11 @@ import { resolve } from "path";
 export default defineConfig({
   server: {
     port: 5174,
+    watch: {
+      // Exclude Python virtualenv and other non-source directories from file watching.
+      // Without this, Vite crashes on NFS/network files inside .venv.
+      ignored: ["**/.venv/**", "**/node_modules/**"],
+    },
     proxy: {
       "/api": {
         target: "http://localhost:8080",
