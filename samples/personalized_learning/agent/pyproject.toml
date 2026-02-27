@@ -9,6 +9,7 @@ dependencies = [
     "google-cloud-storage>=2.10.0",
     "python-dotenv>=1.0.0",
     "certifi>=2023.0.0",
+    "litellm",
 ]
 
 [project.optional-dependencies]
