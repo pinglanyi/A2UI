@@ -36,8 +36,12 @@ from prompt_builder import (
     UI_DESCRIPTION,
 )
 from tools import get_contact_info
-from a2ui.inference.schema.manager import A2uiSchemaManager
-from a2ui.inference.schema.common_modifiers import remove_strict_validation
+from a2ui.core.schema.constants import VERSION_0_8, A2UI_DELIMITER
+from a2ui.core.schema.manager import A2uiSchemaManager
+from a2ui.core.parser import parse_response
+from a2ui.basic_catalog.provider import BasicCatalog
+from a2ui.core.schema.common_modifiers import remove_strict_validation
+from a2ui.a2a import get_a2ui_agent_extension
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +56,10 @@ class ContactAgent:
     self.use_ui = use_ui
     self.schema_manager = (
         A2uiSchemaManager(
-            version="0.8",
-            basic_examples_path="examples",
+            VERSION_0_8,
+            catalogs=[
+                BasicCatalog.get_config(version=VERSION_0_8, examples_path="examples")
+            ],
             schema_modifiers=[remove_strict_validation],
             accepts_inline_catalogs=True,
         )
@@ -73,7 +79,12 @@ class ContactAgent:
   def get_agent_card(self) -> AgentCard:
     capabilities = AgentCapabilities(
         streaming=True,
-        extensions=[self.schema_manager.get_agent_extension()],
+        extensions=[
+            get_a2ui_agent_extension(
+                self.schema_manager.accepts_inline_catalogs,
+                self.schema_manager.supported_catalog_ids,
+            )
+        ],
     )
     skill = AgentSkill(
         id="find_contact",
@@ -224,7 +235,7 @@ class ContactAgent:
           )
 
         final_response_content = (
-            f"Message sent to {contact_name}\n---a2ui_JSON---\n{json_content}"
+            f"Message sent to {contact_name}\n{A2UI_DELIMITER}\n{json_content}"
         )
 
         yield {
@@ -245,7 +256,7 @@ class ContactAgent:
 
         logger.info(f"--- ContactAgent.stream: Sending Floor Plan ---")
         final_response_content = (
-            f"Here is the floor plan.\n---a2ui_JSON---\n{json_content}"
+            f"Here is the floor plan.\n{A2UI_DELIMITER}\n{json_content}"
         )
         yield {"is_task_complete": True, "content": final_response_content}
         return
@@ -302,40 +313,25 @@ class ContactAgent:
             f" {attempt})... ---"
         )
         try:
-          if "---a2ui_JSON---" not in final_response_content:
-            raise ValueError("Delimiter '---a2ui_JSON---' not found.")
+          text_part, parsed_json_data = parse_response(final_response_content)
 
-          text_part, json_string = final_response_content.split("---a2ui_JSON---", 1)
+          # Handle the "no results found" or empty JSON case
+          if parsed_json_data == []:
+            logger.info(
+                "--- ContactAgent.stream: Empty JSON list found. "
+                "Assuming valid (e.g., 'no results'). ---"
+            )
+            is_valid = True
+            continue
 
-          # Handle the "no results found" case
-          json_string_cleaned = (
-              json_string.strip().lstrip("```json").rstrip("```").strip()
+          logger.info("--- ContactAgent.stream: Validating against A2UI_SCHEMA... ---")
+          selected_catalog.validator.validate(parsed_json_data)
+
+          logger.info(
+              "--- ContactAgent.stream: UI JSON successfully parsed AND validated"
+              f" against schema. Validation OK (Attempt {attempt}). ---"
           )
-          if not json_string.strip() or json_string_cleaned == "[]":
-            logger.info(
-                "--- ContactAgent.stream: Empty JSON list found. Assuming valid (e.g.,"
-                " 'no results'). ---"
-            )
-            is_valid = True
-
-          else:
-            if not json_string_cleaned:
-              raise ValueError("Cleaned JSON string is empty.")
-
-              # Validate parsed JSON against A2UI_SCHEMA
-              # TODO: Re-enable validation after resolving the inline catalog issue
-              # parsed_json_data = json.loads(json_string_cleaned)
-              # logger.info(
-              #     "--- ContactAgent.stream: Validating against A2UI_SCHEMA... ---"
-              # )
-              # selected_catalog.validator.validate(parsed_json_data)
-              # --- End New Validation Steps ---
-
-            logger.info(
-                "--- ContactAgent.stream: UI JSON successfully parsed AND validated"
-                f" against schema. Validation OK (Attempt {attempt}). ---"
-            )
-            is_valid = True
+          is_valid = True
 
         except (
             ValueError,
@@ -377,7 +373,7 @@ class ContactAgent:
             f"Your previous response was invalid. {error_message} You MUST generate a"
             " valid response that strictly follows the A2UI JSON SCHEMA. The response"
             " MUST be a JSON list of A2UI messages. Ensure the response is split by"
-            " '---a2ui_JSON---' and the JSON part is well-formed. Please retry the"
+            f" '{A2UI_DELIMITER}' and the JSON part is well-formed. Please retry the"
             f" original request: '{query}'"
         )
         # Loop continues...
