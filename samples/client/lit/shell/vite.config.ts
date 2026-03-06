@@ -29,8 +29,13 @@ export default async () => {
     shell: resolve(__dirname, "index.html"),
   };
 
+  const appKey = process.env.APP_KEY;
+
   return {
     plugins: [Middleware.A2AMiddleware.plugin()],
+    server: {
+      open: appKey ? `/?app=${appKey}` : "/",
+    },
     build: {
       rollupOptions: {
         input: entry,
