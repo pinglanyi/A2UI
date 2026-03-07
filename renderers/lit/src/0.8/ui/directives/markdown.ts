@@ -72,3 +72,10 @@ class MarkdownDirective extends Directive {
 }
 
 export const markdown = directive(MarkdownDirective);
+
+const markdownItStandalone = MarkdownIt();
+export function renderMarkdownToHtmlString(value: string): string {
+  return markdownItStandalone.render(value);
+}
+
+export { renderMarkdownToHtmlString as renderMarkdown };

@@ -16,6 +16,10 @@
     "./ui": {
       "types": "./dist/src/0.8/ui/ui.d.ts",
       "default": "./dist/src/0.8/ui/ui.js"
+    },
+    "./markdown-it": {
+      "types": "./dist/src/0.8/ui/directives/markdown.d.ts",
+      "default": "./dist/src/0.8/ui/directives/markdown.js"
     }
   },
   "type": "module",

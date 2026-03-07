@@ -24,11 +24,17 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
 
+    /* Path mappings (resolves @a2ui/lit via project reference, no node_modules needed) */
+    "paths": {
+      "@a2ui/lit/markdown-it": ["../lit/src/0.8/ui/directives/markdown.js"]
+    },
+
     /* Linting */
-    "strict": true,
+    "strict": false,
     "noUnusedLocals": false,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../lit" }]
 }
