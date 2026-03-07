@@ -13,8 +13,8 @@
     "dev": "npm run serve --watch",
     "test": "wireit",
     "serve": "wireit",
-    "demo:contact": "(cd ../../../agent/adk/contact_lookup && uv run .)",
-    "demo:restaurant": "(cd ../../../agent/adk/restaurant_finder && uv run .)"
+    "demo:contact": "concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/contact_lookup && uv run .'\"",
+    "demo:restaurant": "concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/restaurant_finder && uv run .'\""
   },
   "wireit": {
     "serve": {
@@ -70,6 +70,7 @@
   },
   "homepage": "https://github.com/google/A2UI/tree/main/web#readme",
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "dotenv": "^17.2.3",
     "typescript": "^5.8.3",
     "uuid": "^13.0.0",
