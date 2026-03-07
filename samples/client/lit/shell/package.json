@@ -13,8 +13,10 @@
     "dev": "npm run serve --watch",
     "test": "wireit",
     "serve": "wireit",
-    "demo:contact": "concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/contact_lookup && uv run .'\"",
-    "demo:restaurant": "concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/restaurant_finder && uv run .'\""
+    "demo:contact": "APP_KEY=contacts concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/contact_lookup && uv run .'\"",
+    "demo:restaurant": "APP_KEY=restaurant concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/restaurant_finder && uv run .'\"",
+    "demo:rizzcharts": "APP_KEY=rizzcharts concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/rizzcharts && uv run .'\"",
+    "demo:orchestrator": "APP_KEY=orchestrator concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/orchestrator && uv run .'\""
   },
   "wireit": {
     "serve": {
