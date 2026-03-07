@@ -30,12 +30,15 @@ from google.genai import types
 from prompt_builder import (
     get_text_prompt,
     ROLE_DESCRIPTION,
-    WORKFLOW_DESCRIPTION,
     UI_DESCRIPTION,
 )
 from tools import get_restaurants
-from a2ui.inference.schema.manager import A2uiSchemaManager
-from a2ui.inference.schema.common_modifiers import remove_strict_validation
+from a2ui.core.schema.constants import VERSION_0_8, A2UI_DELIMITER
+from a2ui.core.schema.manager import A2uiSchemaManager
+from a2ui.core.parser import parse_response
+from a2ui.basic_catalog.provider import BasicCatalog
+from a2ui.core.schema.common_modifiers import remove_strict_validation
+from a2ui.a2a import get_a2ui_agent_extension
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +53,10 @@ class RestaurantAgent:
     self.use_ui = use_ui
     self._schema_manager = (
         A2uiSchemaManager(
-            "0.8",
-            basic_examples_path="examples/",
+            VERSION_0_8,
+            catalogs=[
+                BasicCatalog.get_config(version=VERSION_0_8, examples_path="examples")
+            ],
             schema_modifiers=[remove_strict_validation],
         )
         if use_ui
@@ -70,7 +75,12 @@ class RestaurantAgent:
   def get_agent_card(self) -> AgentCard:
     capabilities = AgentCapabilities(
         streaming=True,
-        extensions=[self._schema_manager.get_agent_extension()],
+        extensions=[
+            get_a2ui_agent_extension(
+                self._schema_manager.accepts_inline_catalogs,
+                self._schema_manager.supported_catalog_ids,
+            )
+        ],
     )
     skill = AgentSkill(
         id="find_restaurants",
@@ -108,7 +118,6 @@ class RestaurantAgent:
     instruction = (
         self._schema_manager.generate_system_prompt(
             role_description=ROLE_DESCRIPTION,
-            workflow_description=WORKFLOW_DESCRIPTION,
             ui_description=UI_DESCRIPTION,
             include_schema=True,
             include_examples=True,
@@ -224,26 +233,10 @@ class RestaurantAgent:
             f" {attempt})... ---"
         )
         try:
-          if "---a2ui_JSON---" not in final_response_content:
-            raise ValueError("Delimiter '---a2ui_JSON---' not found.")
-
-          text_part, json_string = final_response_content.split("---a2ui_JSON---", 1)
-
-          if not json_string.strip():
-            raise ValueError("JSON part is empty.")
-
-          json_string_cleaned = (
-              json_string.strip().lstrip("```json").rstrip("```").strip()
-          )
-
-          if not json_string_cleaned:
-            raise ValueError("Cleaned JSON string is empty.")
+          text_part, parsed_json_data = parse_response(final_response_content)
 
           # --- New Validation Steps ---
-          # 1. Check if it's parsable JSON
-          parsed_json_data = json.loads(json_string_cleaned)
-
-          # 2. Check if it validates against the A2UI_SCHEMA
+          # 1. Check if it validates against the A2UI_SCHEMA
           # This will raise jsonschema.exceptions.ValidationError if it fails
           logger.info(
               "--- RestaurantAgent.stream: Validating against A2UI_SCHEMA... ---"
@@ -297,7 +290,7 @@ class RestaurantAgent:
             f"Your previous response was invalid. {error_message} You MUST generate a"
             " valid response that strictly follows the A2UI JSON SCHEMA. The response"
             " MUST be a JSON list of A2UI messages. Ensure the response is split by"
-            " '---a2ui_JSON---' and the JSON part is well-formed. Please retry the"
+            f" '{A2UI_DELIMITER}' and the JSON part is well-formed. Please retry the"
             f" original request: '{query}'"
         )
         # Loop continues...
