@@ -49,11 +49,10 @@
   "author": "Google",
   "license": "Apache-2.0",
   "devDependencies": {
-    "@types/markdown-it": "^14.1.2",
     "typescript": "^5.8.3",
     "wireit": "^0.15.0-pre.2"
   },
   "dependencies": {
-    "markdown-it": "^14.1.0"
+    "@a2ui/lit": "file:../lit"
   }
 }
