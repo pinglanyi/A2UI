@@ -16,7 +16,7 @@
     "demo:contact": "APP_KEY=contacts concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/contact_lookup && uv run .'\"",
     "demo:restaurant": "APP_KEY=restaurant concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/restaurant_finder && uv run .'\"",
     "demo:rizzcharts": "APP_KEY=rizzcharts concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/rizzcharts && uv run .'\"",
-    "demo:orchestrator": "APP_KEY=orchestrator concurrently \"npm run serve\" \"bash -c 'cd ../../../agent/adk/orchestrator && uv run .'\""
+    "demo:orchestrator": "APP_KEY=orchestrator concurrently -k \"npm run serve\" \"bash -c 'cd ../../../agent/adk/restaurant_finder && uv run . --port=10003'\" \"bash -c 'cd ../../../agent/adk/contact_lookup && uv run . --port=10004'\" \"bash -c 'cd ../../../agent/adk/rizzcharts && uv run . --port=10005'\" \"bash -c 'sleep 8 && cd ../../../agent/adk/orchestrator && uv run . --port=10002 --subagent_urls=http://localhost:10003 --subagent_urls=http://localhost:10004 --subagent_urls=http://localhost:10005'\""
   },
   "wireit": {
     "serve": {
