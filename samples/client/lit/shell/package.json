@@ -41,7 +41,8 @@
         "FORCE_COLOR": "1"
       },
       "dependencies": [
-        "../../../../renderers/lit:build:tsc"
+        "../../../../renderers/lit:build:tsc",
+        "../../../../renderers/markdown-it:build:tsc"
       ],
       "files": [
         "**/*.ts",

@@ -500,6 +500,15 @@ export declare interface CustomNodeProperties {
   [k: string]: ResolvedValue;
 }
 
+/**
+ * A function that renders a markdown string to an HTML string.
+ * Optionally accepts a tag class map to apply CSS classes to rendered elements.
+ */
+export declare type MarkdownRenderer = (
+  value: string,
+  tagClassMap?: Record<string, string[]>
+) => string;
+
 export declare type SurfaceID = string;
 
 /** The complete state of a single UI surface. */
